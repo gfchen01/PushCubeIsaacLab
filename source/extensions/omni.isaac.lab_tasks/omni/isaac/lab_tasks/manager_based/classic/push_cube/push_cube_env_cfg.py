@@ -211,7 +211,6 @@ def obs2origin(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tensor:
     """Distance to the goal."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[obs_cfg.name]
-    
     return torch.norm(asset.data.root_pos_w - env.scene.env_origins, dim=-1)
 
 def dis2obs_reward(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, obs_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -232,11 +231,15 @@ def is_obs_too_far(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tenso
     """Check if the agent is too far from the obstacle."""
     return obs2origin(env, obs_cfg) > 5.0
 
+def is_obs_at_goal(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Check if the agent is too far from the obstacle."""
+    return obs2origin(env, obs_cfg) < 0.2
+
 @configclass
 class RewardsCfg:
     # alive = RewTerm(func=mdp.is_alive, weight=1.0)
     
-    terminating = RewTerm(func=mdp.is_terminated, weight=-10.0)
+    # terminating = RewTerm(func=mdp.is_terminated, weight=-10.0)
     
     minus_dis2obs = RewTerm(func=dis2obs_reward, weight=1.0, params={"asset_cfg": SceneEntityCfg("cube"), "obs_cfg": SceneEntityCfg("cube_obs")})
     
@@ -255,6 +258,9 @@ class TerminationsCfg:
 
     # (3) obstacle too far from origin
     obs_too_far = DoneTerm(func=is_obs_too_far, params={"obs_cfg": SceneEntityCfg("cube_obs")}, time_out=True)
+    
+    # (4) obstacle at goal
+    obs_reach_goal = DoneTerm(func=is_obs_at_goal, params={"obs_cfg": SceneEntityCfg("cube_obs")}, time_out=True)
 
 @configclass
 class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
