@@ -1,5 +1,8 @@
 import torch
 
+# from omni.isaac.wheeled_robots.robots import WheeledRobot
+# from omni.isaac.core.utils.types import ArticulationAction
+
 import omni.isaac.lab.envs.mdp as mdp
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
@@ -14,6 +17,8 @@ from omni.isaac.lab.managers import RewardTermCfg as RewTerm
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
+
+import numpy as np
 
 @configclass
 class MySceneCfg(InteractiveSceneCfg):
@@ -38,6 +43,15 @@ class MySceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 2.0, 0.1)),
     )
+    
+    # jetbot = WheeledRobot(prim_path="{ENV_REGEX_NS}/jetbot",
+    #                       name="Joan",
+    #                       wheel_dof_names=["left_wheel_joint", "right_wheel_joint"]
+    # )
+    
+    # action = ArticulationAction(joint_velocities = np.array([1.14, 1.42]))
+
+    # jetbot.apply_wheel_actions(action)
     
     cube_obs: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/cube_obs",
@@ -164,19 +178,19 @@ class ObservationsCfg:
 class EventCfg:
     """Configuration for events."""
 
-    # reset_base = EventTerm(
-    #     func=mdp.reset_root_state_uniform,
-    #     mode="reset",
-    #     params={
-    #         "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
-    #         "velocity_range": {
-    #             "x": (-0.5, 0.5),
-    #             "y": (-0.5, 0.5),
-    #             "z": (-0.5, 0.5),
-    #         },
-    #         "asset_cfg": SceneEntityCfg("cube"),
-    #     },
-    # )
+    reset_base = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {"x": (-2.0, 2.0), "y": (-2.0, 2.0), "yaw": (-3.14, 3.14)},
+            "velocity_range": {
+                "x": (-0.0, 0.0),
+                "y": (-0.0, 0.0),
+                "z": (-0.0, 0.0),
+            },
+            "asset_cfg": SceneEntityCfg("cube"),
+        },
+    )
     
     # reset_obs = EventTerm(
     #     func=mdp.reset_root_state_uniform,
