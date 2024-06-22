@@ -301,35 +301,35 @@ class CubeEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = 50
 
 
-# def main():
-#     """Main function."""
+def main():
+    """Main function."""
 
-#     # setup base environment
-#     env = ManagerBasedRLEnv(cfg=CubeEnvCfg())
+    # setup base environment
+    env = ManagerBasedRLEnv(cfg=CubeEnvCfg())
 
-#     # # setup target position commands
-#     # # target_position = torch.rand(env.num_envs, 3, device=env.device) * 2
-#     # target_position = torch.zeros(env.num_envs, 3, device=env.device)
-#     # target_position[:, 2] += 0.0
-#     # # offset all targets so that they move to the world origin
-#     # target_position -= env.scene.env_origins
+    # # setup target position commands
+    # # target_position = torch.rand(env.num_envs, 3, device=env.device) * 2
+    # target_position = torch.zeros(env.num_envs, 3, device=env.device)
+    # target_position[:, 2] += 0.0
+    # # offset all targets so that they move to the world origin
+    # target_position -= env.scene.env_origins
 
-#     # simulate physics
-#     count = 0
-#     obs, _ = env.reset()
-#     while simulation_app.is_running():
-#         with torch.inference_mode():
-#             # step env
-#             cube_vel_cmd = torch.randn_like(env.action_manager.action)
-#             obs, rew, terminated, truncated, info = env.step(cube_vel_cmd)
-#             # update counter
-#             print(f'Reward: {rew}')
+    # simulate physics
+    count = 0
+    obs, _ = env.reset()
+    while simulation_app.is_running():
+        with torch.inference_mode():
+            # step env
+            cube_vel_cmd = torch.randn_like(env.action_manager.action)
+            obs, rew, terminated, truncated, info = env.step(cube_vel_cmd)
+            # update counter
+            print(f'Reward: {rew}')
 
-#     env.close()
+    env.close()
 
 
-# if __name__ == "__main__":
-#     # run the main function
-#     main()
-#     # close sim app
-#     simulation_app.close()
+if __name__ == "__main__":
+    # run the main function
+    main()
+    # close sim app
+    simulation_app.close()

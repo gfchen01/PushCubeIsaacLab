@@ -10,7 +10,7 @@ from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 
 DIFFEREENTIAL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/Jetbot/jetbot.usd",
+        usd_path=f"/home/luke/Downloads/jetbot.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -27,7 +27,7 @@ DIFFEREENTIAL_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 2.0), joint_pos={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0}
+        pos=(0.0, 0.0, 0.15), joint_pos={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0}
     ),
     actuators={
         "left_actuator": ImplicitActuatorCfg(
@@ -35,14 +35,14 @@ DIFFEREENTIAL_CFG = ArticulationCfg(
             effort_limit=400.0,
             velocity_limit=100.0,
             stiffness=0.0,
-            damping=10.0,
+            damping=1e4,
         ),
         "right_actuator": ImplicitActuatorCfg(
             joint_names_expr=["left_wheel_joint"], 
             effort_limit=400.0, 
             velocity_limit=100.0, 
             stiffness=0.0, 
-            damping=10.0
+            damping=1e4,
         ),
     },
 )
