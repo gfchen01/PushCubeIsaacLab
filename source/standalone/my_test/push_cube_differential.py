@@ -127,12 +127,11 @@ class CarActionTerm(ActionTerm):
         # self._asset.write_root_velocity_to_sim(self._vel_command)
         
         self._vel_command[:, 0] = ((2 * self._processed_actions[:, 0]) - (self._processed_actions[:, 1] * self.wheel_base)) / (2 * self.wheel_radius)
-        self._vel_command[:, 1] = -((2 * self._processed_actions[:, 0]) + (self._processed_actions[:, 1] * self.wheel_base)) / (2 * self.wheel_radius)
-        
-        self._vel_command[:, 0] = 10.0
-        self._vel_command[:, 1] = 10.0
+        self._vel_command[:, 1] = ((2 * self._processed_actions[:, 0]) + (self._processed_actions[:, 1] * self.wheel_base)) / (2 * self.wheel_radius)
         
         print(f"Velocity command: {self._vel_command[0, :]}")
+        print(f"wheel base: {self.wheel_base}")
+        print(f"wheel radius: {self.wheel_radius}")
         
         self._asset.set_joint_velocity_target(self._vel_command)
 
@@ -143,10 +142,10 @@ class CarActionTermCfg(ActionTermCfg):
     class_type: type = CarActionTerm
     """The class corresponding to the action term."""
     
-    wheel_radius: float = 0.03
+    wheel_radius: float = 0.0337
     """Radius of the wheel."""
     
-    wheel_base: float = 0.1125
+    wheel_base: float = 0.12
 
     # p_gain: float = 5.0
     # """Proportional gain of the PD controller."""
@@ -193,11 +192,17 @@ def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tens
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.root_pos_w - env.scene.env_origins
 
-def base_velocity(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+def base_linear_velocity(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.root_lin_vel_w
+
+def base_angular_velocity(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.root_ang_vel_w
 
 def obstacle_position(env: ManagerBasedEnv, obstacle_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
@@ -260,7 +265,8 @@ class ObservationsCfg:
 
         # cube velocity
         position = ObsTerm(func=base_position, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        velocity = ObsTerm(func=base_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        linear_velocity = ObsTerm(func=base_linear_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
 
         def __post_init__(self):
@@ -366,7 +372,9 @@ def main():
     env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
     
     base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 0.2
+    base_target_vel[:, 0] = 0.0
+    base_target_vel[:, 1] = 1.0
+    
     obs, _ = env.reset()
     count = 0
     while simulation_app.is_running():
@@ -377,7 +385,7 @@ def main():
             print("[INFO] Reset the environment.")
         obs, _, _, _, _ = env.step(base_target_vel)
         
-        base_actual_vel = obs["policy"][0, 3:6]
+        base_actual_vel = obs["policy"][0, 3:9]
         print(f"Base actual velocity: {base_actual_vel}")
         count += 1
     
