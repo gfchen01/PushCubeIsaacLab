@@ -1,20 +1,13 @@
-import argparse
+"""This script demonstrates how to spawn a cart-pole and interact with it.
 
-from omni.isaac.lab.app import AppLauncher
+.. code-block:: bash
 
-# add argparse arguments
-parser = argparse.ArgumentParser(description="Tutorial on spawning and interacting with an articulation.")
-# parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
+    # Usage
+    ./isaaclab.sh -p source/standalone/tutorials/01_assets/run_articulation.py
 
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+"""
 
-"""Rest everything follows."""
+"""Launch Isaac Sim Simulator first."""
 
 import torch
 
@@ -154,7 +147,7 @@ class MySceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 1.0, 0.05)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.02)),
     )
 
     # lights
@@ -212,19 +205,19 @@ def obs2goal_reward(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tens
     """Distance to the goal."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[obs_cfg.name]
-    return -torch.log(torch.norm(asset.data.root_pos_w - env.scene.env_origins, dim=-1))
+    return -torch.log(0.1 * torch.norm(asset.data.root_pos_w - env.scene.env_origins, dim=-1))
 
 def is_car_too_far(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, obs_cfg: SceneEntityCfg) -> torch.Tensor:
     """Check if the agent is too far from the obstacle."""
-    return dis2obs(env, asset_cfg, obs_cfg) > 5.0
+    return dis2obs(env, asset_cfg, obs_cfg) > 2.0
 
 def is_obs_too_far(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tensor:
     """Check if the agent is too far from the obstacle."""
-    return obs2origin(env, obs_cfg) > 5.0
+    return obs2origin(env, obs_cfg) > 2.0
 
 def is_obs_at_goal(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tensor:
     """Check if the agent is too far from the obstacle."""
-    return obs2origin(env, obs_cfg) < 0.2
+    return obs2origin(env, obs_cfg) < 0.05
 
 # config classes
 
@@ -263,7 +256,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-2.0, 2.0), "y": (-2.0, 2.0), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -279,9 +272,9 @@ class EventCfg:
         params={
             "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
             "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.5, 0.5),
+                "x": (-0.0, 0.0),
+                "y": (-0.0, 0.0),
+                "z": (-0.0, 0.0),
             },
             "asset_cfg": SceneEntityCfg("cube"),
         },
@@ -325,7 +318,7 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
-    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=2.5)
+    scene: MySceneCfg = MySceneCfg(num_envs=32, env_spacing=2.5)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -344,35 +337,4 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 0.01
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.episode_length_s = 50
-
-
-def main():
-    env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
-    
-    base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 1.0
-    base_target_vel[:, 1] = 1.0
-    
-    obs, _ = env.reset()
-    count = 0
-    while simulation_app.is_running():
-        if count % 1000 == 0:
-            count = 0
-            obs, _ = env.reset()
-            print("-" * 80)
-            print("[INFO] Reset the environment.")
-        obs, rew, terminated, truncated, info = env.step(base_target_vel)
-        
-        # base_actual_vel = obs["policy"][0, 3:9]
-        # print(f"Base actual velocity: {base_actual_vel}")
-        count += 1
-    
-    env.close()
-
-
-if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()
+        self.episode_length_s = 200
