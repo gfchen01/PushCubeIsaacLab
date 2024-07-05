@@ -9,7 +9,7 @@ import gymnasium as gym
 from . import agents, push_cube_env_cfg, push_cube_differential_env_cfg
 
 gym.register(
-    id="PushCube",
+    id="Pushcube",
     entry_point="omni.isaac.lab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -22,7 +22,7 @@ gym.register(
 )
 
 gym.register(
-    id="PushCube-Differential",
+    id="Pushcube-Differential",
     entry_point="omni.isaac.lab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

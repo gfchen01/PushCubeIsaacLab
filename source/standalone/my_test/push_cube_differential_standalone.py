@@ -1,3 +1,21 @@
+import argparse
+
+from omni.isaac.lab.app import AppLauncher
+
+# add argparse arguments
+parser = argparse.ArgumentParser(description="Tutorial on spawning and interacting with an articulation.")
+# parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
+# append AppLauncher cli args
+AppLauncher.add_app_launcher_args(parser)
+# parse the arguments
+args_cli = parser.parse_args()
+
+# launch omniverse app
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app
+
+"""Rest everything follows."""
+
 import torch
 
 import omni.isaac.core.utils.prims as prim_utils
@@ -196,8 +214,10 @@ class MySceneCfg(InteractiveSceneCfg):
 def rgb_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """RGB image from the camera."""
     # extract the used quantities (to enable type-hinting)
-    camera: Camera = env.scene[asset_cfg.name]
-    return camera.data.output["rgb"]
+    camera: Camera = env.scene["camera"]
+    # print(f'image shape: {camera.data.output["rgb"].shape}')
+    dim_num = camera.data.output["rgb"].shape[0]
+    return camera.data.output["rgb"].view(dim_num, -1)
 
 def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
@@ -287,6 +307,7 @@ class ObservationsCfg:
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         
+        rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         
         def __post_init__(self):
             self.enable_corruption = True
@@ -369,7 +390,7 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
-    scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
+    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=2.5)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -389,3 +410,34 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.01
         self.sim.physics_material = self.scene.terrain.physics_material
         self.episode_length_s = 200
+
+
+def main():
+    env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
+    
+    base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
+    base_target_vel[:, 0] = 1.0
+    base_target_vel[:, 1] = 1.0
+    
+    obs, _ = env.reset()
+    count = 0
+    while simulation_app.is_running():
+        if count % 1000 == 0:
+            count = 0
+            obs, _ = env.reset()
+            print("-" * 80)
+            print("[INFO] Reset the environment.")
+        obs, rew, terminated, truncated, info = env.step(base_target_vel)
+        
+        # base_actual_vel = obs["policy"][0, 3:9]
+        # print(f"Base actual velocity: {base_actual_vel}")
+        count += 1
+    
+    env.close()
+
+
+if __name__ == "__main__":
+    # run the main function
+    main()
+    # close sim app
+    simulation_app.close()

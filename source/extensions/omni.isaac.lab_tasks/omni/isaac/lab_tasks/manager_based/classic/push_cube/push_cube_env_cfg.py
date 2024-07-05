@@ -178,19 +178,19 @@ class ObservationsCfg:
 class EventCfg:
     """Configuration for events."""
 
-    reset_base = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": (-2.0, 2.0), "y": (-2.0, 2.0), "yaw": (-3.14, 3.14)},
-            "velocity_range": {
-                "x": (-0.0, 0.0),
-                "y": (-0.0, 0.0),
-                "z": (-0.0, 0.0),
-            },
-            "asset_cfg": SceneEntityCfg("cube"),
-        },
-    )
+    # reset_base = EventTerm(
+    #     func=mdp.reset_root_state_uniform,
+    #     mode="reset",
+    #     params={
+    #         "pose_range": {"x": (-2.0, 2.0), "y": (-2.0, 2.0), "yaw": (-3.14, 3.14)},
+    #         "velocity_range": {
+    #             "x": (-0.0, 0.0),
+    #             "y": (-0.0, 0.0),
+    #             "z": (-0.0, 0.0),
+    #         },
+    #         "asset_cfg": SceneEntityCfg("cube"),
+    #     },
+    # )
     
     # reset_obs = EventTerm(
     #     func=mdp.reset_root_state_uniform,
@@ -281,7 +281,7 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
-    scene: MySceneCfg = MySceneCfg(num_envs=64, env_spacing=2.5)
+    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=2.5)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -300,5 +300,5 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 0.01
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.episode_length_s = 50
+        self.episode_length_s = 100
         
