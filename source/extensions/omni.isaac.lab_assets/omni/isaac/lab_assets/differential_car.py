@@ -27,7 +27,7 @@ DIFFEREENTIAL_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 1.0, 0.15), joint_pos={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0}
+        pos=(0.0, 0.0, 0.15), joint_pos={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0}
     ),
     actuators={
         "left_actuator": ImplicitActuatorCfg(

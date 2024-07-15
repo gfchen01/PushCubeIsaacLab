@@ -3,13 +3,19 @@ import argparse
 from omni.isaac.lab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Tutorial on spawning and interacting with an articulation.")
-# parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
+parser = argparse.ArgumentParser(description="Push cube standalone test")
+parser.add_argument("--draw", action="store_true", default=False, help="Draw pointcloud from depth")
+parser.add_argument(
+    "--save",
+    action="store_true",
+    default=False,
+    help="Save the data from camera at index specified by ``--camera_id``.",
+)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
+args_cli.enable_cameras = True
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -19,6 +25,8 @@ simulation_app = app_launcher.app
 import torch
 
 import omni.isaac.core.utils.prims as prim_utils
+import os
+import omni.replicator.core as rep
 
 import omni.isaac.lab.envs.mdp as mdp
 import omni.isaac.lab.sim as sim_utils
@@ -39,6 +47,13 @@ from omni.isaac.lab.utils import configclass
 
 # sensors
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
+from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
+from omni.isaac.lab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
+from omni.isaac.lab_assets import VELODYNE_VLP_16_RAYCASTER_CFG
+
+from omni.isaac.lab.markers import VisualizationMarkers
+from omni.isaac.lab.markers.config import RAY_CASTER_MARKER_CFG
+from omni.isaac.lab.utils import convert_dict_to_backend
 
 ##
 # Pre-defined configs
@@ -143,7 +158,7 @@ class CarActionTermCfg(ActionTermCfg):
     
 OBSTACLE_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/obstacle_blend.usd",
+        usd_path=f"/home/luke/Downloads/T_shape.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -158,6 +173,7 @@ OBSTACLE_CFG = RigidObjectCfg(
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
         ),
+        scale=(0.2, 0.2, 0.2),
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.02)),
 )
@@ -185,11 +201,11 @@ class MySceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 1.0, 0.02)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.02)),
     )
     
-    # obstacle: RigidObjectCfg = OBSTACLE_CFG.copy()
-    # obstacle.prim_path = "{ENV_REGEX_NS}/obstacle"
+    obstacle: RigidObjectCfg = OBSTACLE_CFG.copy()
+    obstacle.prim_path = "{ENV_REGEX_NS}/obstacle"
     
     # lights
     light = AssetBaseCfg(
@@ -206,8 +222,19 @@ class MySceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
-        offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+        offset=CameraCfg.OffsetCfg(pos=(0.05, 0.0, 0.015), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
     )
+    
+    # ray_caster = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/differential_car/chassis",
+    #     mesh_prim_paths=["/World/ground"],
+    #     pattern_cfg=patterns.LidarPatternCfg(
+    #         channels=16, vertical_fov_range=(-15.0, 15.0), horizontal_fov_range=(-180.0, 180.0), horizontal_res=0.2
+    #     ), # Velodyne VLP-16
+    #     attach_yaw_only=True,
+    #     debug_vis=True,
+    #     max_distance=100,
+    # )
 
 # Utility functions
 
@@ -218,6 +245,13 @@ def rgb_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     # print(f'image shape: {camera.data.output["rgb"].shape}')
     dim_num = camera.data.output["rgb"].shape[0]
     return camera.data.output["rgb"].view(dim_num, -1)
+
+def depth_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Depth image from the camera."""
+    # extract the used quantities (to enable type-hinting)
+    camera: Camera = env.scene["camera"]
+    dim_num = camera.data.output["distance_to_image_plane"].shape[0]
+    return camera.data.output["distance_to_image_plane"].view(dim_num, -1)
 
 def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
@@ -307,7 +341,8 @@ class ObservationsCfg:
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         
-        rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         
         def __post_init__(self):
             self.enable_corruption = True
@@ -390,7 +425,7 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
-    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=2.5)
+    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=10)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -416,11 +451,27 @@ def main():
     env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
     
     base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 1.0
+    base_target_vel[:, 0] = 0.0
     base_target_vel[:, 1] = 1.0
     
     obs, _ = env.reset()
     count = 0
+    
+    non_image_obs_dim = 12
+    
+    if env.sim.has_gui() and args_cli.draw:
+        cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
+        cfg.markers["hit"].radius = 0.002
+        pc_markers = VisualizationMarkers(cfg)
+        
+    output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "camera")
+    rep_writer = rep.BasicWriter(
+        output_dir=output_dir,
+        frame_padding=0,
+    )
+    
+    camera = env.scene["camera"]
+    
     while simulation_app.is_running():
         if count % 1000 == 0:
             count = 0
@@ -428,6 +479,63 @@ def main():
             print("-" * 80)
             print("[INFO] Reset the environment.")
         obs, rew, terminated, truncated, info = env.step(base_target_vel)
+        
+        # extract depth image
+        depth_images = obs["policy"][:, non_image_obs_dim:]
+        depth_images = depth_images.view(env.num_envs, 480, 640)
+        # print(f"Depth images pos: {env.scene['camera'].data.pos_w}")
+                
+        if env.sim.has_gui() and args_cli.draw:
+            pointclouds = []
+            for i in range(env.num_envs):
+                pointcloud = create_pointcloud_from_depth(
+                    intrinsic_matrix=camera.data.intrinsic_matrices[i],
+                    depth=camera.data.output["distance_to_image_plane"][i],
+                    position=camera.data.pos_w[i],
+                    orientation=camera.data.quat_w_world[i],
+                    device=env.device,
+                )
+                pointclouds.append(pointcloud)
+                # print(f"Pointcloud shape: {pointcloud.shape}")
+            
+            pointclouds = torch.cat(pointclouds, dim=0)
+            # pointclouds = pointclouds.view(-1, 3)
+            print(f"Pointcloud shape: {pointclouds.shape}")
+            if len(pointclouds) > 0:
+                pc_markers.visualize(translations=pointclouds)
+        
+        print(f"camera data output: {camera.data.output}")
+        
+        if args_cli.save:
+            # Save images from camera at camera_index
+            # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.
+            # tensordict allows easy indexing of tensors in the dictionary
+            cam_data = convert_dict_to_backend(camera.data.output, backend="numpy")
+            # print(f"cam_data type: {type(cam_data['rgb'])}")
+            single_cam_data = {"rgb": cam_data["rgb"][0]}
+            
+            # Extract the other information
+            single_cam_info = camera.data.info[0]
+
+            # Pack data back into replicator format to save them using its writer
+            if env.sim.get_version()[0] == 4:
+                rep_output = {"annotators": {}}
+                for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
+                    if info is not None:
+                        rep_output["annotators"][key] = {"render_product": {"data": data, **info}}
+                    else:
+                        rep_output["annotators"][key] = {"render_product": {"data": data}}
+            else:
+                rep_output = dict()
+                for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
+                    if info is not None:
+                        rep_output[key] = {"data": data, "info": info}
+                    else:
+                        rep_output[key] = data
+            # Save images
+            # Note: We need to provide On-time data for Replicator to save the images.
+            rep_output["trigger_outputs"] = {"on_time": camera.frame[0]}
+            rep_writer.write(rep_output)
         
         # base_actual_vel = obs["policy"][0, 3:9]
         # print(f"Base actual velocity: {base_actual_vel}")
