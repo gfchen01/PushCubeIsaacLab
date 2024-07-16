@@ -60,7 +60,8 @@ from omni.isaac.lab.utils import convert_dict_to_backend
 ##
 from omni.isaac.lab_assets import DIFFEREENTIAL_CFG
 
-
+import open3d as o3d
+import numpy as np
 
 class CarActionTerm(ActionTerm):
     """Simple action term that implements a PD controller to track a target position.
@@ -156,9 +157,9 @@ class CarActionTermCfg(ActionTermCfg):
     # d_gain: float = 0.5
     # """Derivative gain of the PD controller."""
     
-OBSTACLE_CFG = RigidObjectCfg(
+SURROUNDING_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/T_shape.usd",
+        usd_path=f"/home/clp/Downloads/T_shape.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -204,8 +205,8 @@ class MySceneCfg(InteractiveSceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.02)),
     )
     
-    obstacle: RigidObjectCfg = OBSTACLE_CFG.copy()
-    obstacle.prim_path = "{ENV_REGEX_NS}/obstacle"
+    surrounding: RigidObjectCfg = SURROUNDING_CFG.copy()
+    surrounding.prim_path = "{ENV_REGEX_NS}/surrounding"
     
     # lights
     light = AssetBaseCfg(
@@ -220,9 +221,9 @@ class MySceneCfg(InteractiveSceneCfg):
         width=640,
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e3)
         ),
-        offset=CameraCfg.OffsetCfg(pos=(0.05, 0.0, 0.015), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.3), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
     )
     
     # ray_caster = RayCasterCfg(
@@ -451,8 +452,8 @@ def main():
     env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
     
     base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 0.0
-    base_target_vel[:, 1] = 1.0
+    base_target_vel[:, 0] = 1.0
+    base_target_vel[:, 1] = 2.0
     
     obs, _ = env.reset()
     count = 0
@@ -469,7 +470,11 @@ def main():
         output_dir=output_dir,
         frame_padding=0,
     )
-    
+
+    cloud_output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "pointcloud")
+    if not os.path.exists(cloud_output_dir):
+        os.makedirs(cloud_output_dir)
+
     camera = env.scene["camera"]
     
     while simulation_app.is_running():
@@ -485,14 +490,14 @@ def main():
         depth_images = depth_images.view(env.num_envs, 480, 640)
         # print(f"Depth images pos: {env.scene['camera'].data.pos_w}")
                 
-        if env.sim.has_gui() and args_cli.draw:
+        if args_cli.draw:
             pointclouds = []
             for i in range(env.num_envs):
                 pointcloud = create_pointcloud_from_depth(
                     intrinsic_matrix=camera.data.intrinsic_matrices[i],
                     depth=camera.data.output["distance_to_image_plane"][i],
                     position=camera.data.pos_w[i],
-                    orientation=camera.data.quat_w_world[i],
+                    orientation=camera.data.quat_w_ros[i],
                     device=env.device,
                 )
                 pointclouds.append(pointcloud)
@@ -500,11 +505,23 @@ def main():
             
             pointclouds = torch.cat(pointclouds, dim=0)
             # pointclouds = pointclouds.view(-1, 3)
-            print(f"Pointcloud shape: {pointclouds.shape}")
-            if len(pointclouds) > 0:
+            # print(f"Pointcloud shape: {pointclouds.shape}")
+
+            # pointcloud_o3d = o3d.geometry.PointCloud()
+            # pointcloud_o3d.points = o3d.utility.Vector3dVector(pointclouds.cpu().numpy())
+            # pointcloud_o3d = pointcloud_o3d.voxel_down_sample(voxel_size=0.05)
+            
+            # Save the pointcloud to the 'output' directory in the same folder as the script
+            # o3d.io.write_point_cloud(os.path.join(cloud_output_dir, f"pointcloud_{count}.ply"), pointcloud_o3d, write_ascii=True)
+            # print('Pointcloud saved.')
+
+            # points_downsampled = np.array(pointcloud_o3d.points)
+            # pointclouds = torch.tensor(points_downsampled, device=env.device)
+
+            if len(pointclouds) > 0 and sim.has_gui():
                 pc_markers.visualize(translations=pointclouds)
         
-        print(f"camera data output: {camera.data.output}")
+        # print(f"camera data output: {camera.data.output}")
         
         if args_cli.save:
             # Save images from camera at camera_index

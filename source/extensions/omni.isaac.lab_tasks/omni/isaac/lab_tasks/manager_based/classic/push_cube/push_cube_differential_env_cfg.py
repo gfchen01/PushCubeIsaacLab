@@ -117,15 +117,10 @@ class CarActionTermCfg(ActionTermCfg):
     """Radius of the wheel."""
     
     wheel_base: float = 0.12
-
-    # p_gain: float = 5.0
-    # """Proportional gain of the PD controller."""
-    # d_gain: float = 0.5
-    # """Derivative gain of the PD controller."""
     
 OBSTACLE_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/obstacle_blend.usd",
+        usd_path=f"/home/clp/Downloads/obstacle_blend.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
