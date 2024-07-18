@@ -46,9 +46,9 @@ from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
 
 # sensors
+from omni.isaac.lab.sensors import ContactSensorCfg
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
 from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
-from omni.isaac.lab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
 from omni.isaac.lab_assets import VELODYNE_VLP_16_RAYCASTER_CFG
 
 from omni.isaac.lab.markers import VisualizationMarkers
@@ -156,9 +156,9 @@ class CarActionTermCfg(ActionTermCfg):
     # d_gain: float = 0.5
     # """Derivative gain of the PD controller."""
     
-OBSTACLE_CFG = RigidObjectCfg(
+SURROUNDING_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/T_shape.usd",
+        usd_path=f"/home/luke/Downloads/door_env.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -173,9 +173,10 @@ OBSTACLE_CFG = RigidObjectCfg(
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
         ),
-        scale=(0.2, 0.2, 0.2),
+        scale=(0.4, 0.4, 0.4),
+        activate_contact_sensors=True,
     ),
-    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.02)),
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.0)),
 )
 
 @configclass
@@ -190,22 +191,26 @@ class MySceneCfg(InteractiveSceneCfg):
 
     # add car
     differential_car: ArticulationCfg = DIFFEREENTIAL_CFG.copy()
+    differential_car.init_state.pos = (1.5, 0.0, 0.10)
     differential_car.prim_path = "{ENV_REGEX_NS}/differential_car"
     
     cube: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/cube",
         spawn=sim_utils.CuboidCfg(
-            size=(0.05, 0.05, 0.05),
+            size=(0.08, 0.08, 0.08),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.02)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.02)),
     )
     
-    obstacle: RigidObjectCfg = OBSTACLE_CFG.copy()
-    obstacle.prim_path = "{ENV_REGEX_NS}/obstacle"
+    surrounding: RigidObjectCfg = SURROUNDING_CFG.copy()
+    surrounding.prim_path = "{ENV_REGEX_NS}/surrounding"
+    surrounding_contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/surrounding/door_env", update_period=0.0
+    )
     
     # lights
     light = AssetBaseCfg(
@@ -222,7 +227,7 @@ class MySceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
-        offset=CameraCfg.OffsetCfg(pos=(0.05, 0.0, 0.015), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.1), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
     )
     
     # ray_caster = RayCasterCfg(
@@ -319,6 +324,14 @@ def is_obs_at_goal(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tenso
     """Check if the agent is too far from the obstacle."""
     return obs2origin(env, obs_cfg) < 0.05
 
+def contact_force_mag(env: ManagerBasedEnv) -> torch.Tensor:
+    """Magnitude of the contact force."""
+    # extract the used quantities (to enable type-hinting)
+    contact_forces = env.scene["surrounding_contact_forces"].data.net_forces_w
+    # calculate the magnitude of each contact force
+    contact_forces_mag = torch.norm(contact_forces, dim=-1)
+    return contact_forces_mag
+
 # config classes
 
 @configclass
@@ -342,7 +355,8 @@ class ObservationsCfg:
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         
         # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        # depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        contact_forces_mag = ObsTerm(func=contact_force_mag)
         
         def __post_init__(self):
             self.enable_corruption = True
@@ -373,7 +387,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-0.01, 0.01)},
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -451,7 +465,7 @@ def main():
     env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
     
     base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 0.0
+    base_target_vel[:, 0] = 2.0
     base_target_vel[:, 1] = 1.0
     
     obs, _ = env.reset()
@@ -481,9 +495,13 @@ def main():
         obs, rew, terminated, truncated, info = env.step(base_target_vel)
         
         # extract depth image
-        depth_images = obs["policy"][:, non_image_obs_dim:]
-        depth_images = depth_images.view(env.num_envs, 480, 640)
+        # depth_images = obs["policy"][:, non_image_obs_dim:]
+        # depth_images = depth_images.view(env.num_envs, 480, 640)
         # print(f"Depth images pos: {env.scene['camera'].data.pos_w}")
+        
+        contact_force_magnitude = obs["policy"][:, non_image_obs_dim]
+        # contact_force_magnitude = contact_force_mag(env)
+        print(f"Contact force magnitude: {contact_force_magnitude}")
                 
         if env.sim.has_gui() and args_cli.draw:
             pointclouds = []
@@ -492,7 +510,7 @@ def main():
                     intrinsic_matrix=camera.data.intrinsic_matrices[i],
                     depth=camera.data.output["distance_to_image_plane"][i],
                     position=camera.data.pos_w[i],
-                    orientation=camera.data.quat_w_world[i],
+                    orientation=camera.data.quat_w_ros[i],
                     device=env.device,
                 )
                 pointclouds.append(pointcloud)
@@ -503,9 +521,7 @@ def main():
             print(f"Pointcloud shape: {pointclouds.shape}")
             if len(pointclouds) > 0:
                 pc_markers.visualize(translations=pointclouds)
-        
-        print(f"camera data output: {camera.data.output}")
-        
+                
         if args_cli.save:
             # Save images from camera at camera_index
             # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.

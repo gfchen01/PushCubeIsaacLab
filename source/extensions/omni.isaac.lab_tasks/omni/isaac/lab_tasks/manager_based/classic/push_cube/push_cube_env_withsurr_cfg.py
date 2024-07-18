@@ -1,6 +1,32 @@
+import argparse
+
+from omni.isaac.lab.app import AppLauncher
+
+# add argparse arguments
+parser = argparse.ArgumentParser(description="Push cube standalone test")
+parser.add_argument("--draw", action="store_true", default=False, help="Draw pointcloud from depth")
+parser.add_argument(
+    "--save",
+    action="store_true",
+    default=False,
+    help="Save the data from camera at index specified by ``--camera_id``.",
+)
+# append AppLauncher cli args
+AppLauncher.add_app_launcher_args(parser)
+# parse the arguments
+args_cli = parser.parse_args()
+args_cli.enable_cameras = True
+# launch omniverse app
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app
+
+"""Rest everything follows."""
+
 import torch
 
 import omni.isaac.core.utils.prims as prim_utils
+import os
+import omni.replicator.core as rep
 
 import omni.isaac.lab.envs.mdp as mdp
 import omni.isaac.lab.sim as sim_utils
@@ -20,7 +46,14 @@ from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
 
 # sensors
+from omni.isaac.lab.sensors import ContactSensorCfg
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
+from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
+from omni.isaac.lab_assets import VELODYNE_VLP_16_RAYCASTER_CFG
+
+from omni.isaac.lab.markers import VisualizationMarkers
+from omni.isaac.lab.markers.config import RAY_CASTER_MARKER_CFG
+from omni.isaac.lab.utils import convert_dict_to_backend
 
 ##
 # Pre-defined configs
@@ -123,9 +156,9 @@ class CarActionTermCfg(ActionTermCfg):
     # d_gain: float = 0.5
     # """Derivative gain of the PD controller."""
     
-OBSTACLE_CFG = RigidObjectCfg(
+SURROUNDING_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/obstacle_blend.usd",
+        usd_path=f"/home/luke/Downloads/door_env.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -140,8 +173,10 @@ OBSTACLE_CFG = RigidObjectCfg(
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
         ),
+        scale=(0.4, 0.4, 0.4),
+        activate_contact_sensors=True,
     ),
-    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.02)),
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.0)),
 )
 
 @configclass
@@ -156,22 +191,26 @@ class MySceneCfg(InteractiveSceneCfg):
 
     # add car
     differential_car: ArticulationCfg = DIFFEREENTIAL_CFG.copy()
+    differential_car.init_state.pos = (1.5, 0.0, 0.10)
     differential_car.prim_path = "{ENV_REGEX_NS}/differential_car"
     
     cube: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/cube",
         spawn=sim_utils.CuboidCfg(
-            size=(0.05, 0.05, 0.05),
+            size=(0.08, 0.08, 0.08),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 1.0, 0.02)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.02)),
     )
     
-    # obstacle: RigidObjectCfg = OBSTACLE_CFG.copy()
-    # obstacle.prim_path = "{ENV_REGEX_NS}/obstacle"
+    surrounding: RigidObjectCfg = SURROUNDING_CFG.copy()
+    surrounding.prim_path = "{ENV_REGEX_NS}/surrounding"
+    surrounding_contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/surrounding/door_env", update_period=0.0
+    )
     
     # lights
     light = AssetBaseCfg(
@@ -188,16 +227,36 @@ class MySceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
-        offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="world"),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.1), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
     )
+    
+    # ray_caster = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/differential_car/chassis",
+    #     mesh_prim_paths=["/World/ground"],
+    #     pattern_cfg=patterns.LidarPatternCfg(
+    #         channels=16, vertical_fov_range=(-15.0, 15.0), horizontal_fov_range=(-180.0, 180.0), horizontal_res=0.2
+    #     ), # Velodyne VLP-16
+    #     attach_yaw_only=True,
+    #     debug_vis=True,
+    #     max_distance=100,
+    # )
 
 # Utility functions
 
 def rgb_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """RGB image from the camera."""
     # extract the used quantities (to enable type-hinting)
-    camera: Camera = env.scene[asset_cfg.name]
-    return camera.data.output["rgb"]
+    camera: Camera = env.scene["camera"]
+    # print(f'image shape: {camera.data.output["rgb"].shape}')
+    dim_num = camera.data.output["rgb"].shape[0]
+    return camera.data.output["rgb"].view(dim_num, -1)
+
+def depth_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Depth image from the camera."""
+    # extract the used quantities (to enable type-hinting)
+    camera: Camera = env.scene["camera"]
+    dim_num = camera.data.output["distance_to_image_plane"].shape[0]
+    return camera.data.output["distance_to_image_plane"].view(dim_num, -1)
 
 def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
@@ -265,6 +324,14 @@ def is_obs_at_goal(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tenso
     """Check if the agent is too far from the obstacle."""
     return obs2origin(env, obs_cfg) < 0.05
 
+def contact_force_mag(env: ManagerBasedEnv) -> torch.Tensor:
+    """Magnitude of the contact force."""
+    # extract the used quantities (to enable type-hinting)
+    contact_forces = env.scene["surrounding_contact_forces"].data.net_force_w
+    # calculate the magnitude of each contact force
+    contact_forces_mag = torch.norm(contact_forces, dim=-1)
+    return contact_forces_mag
+
 # config classes
 
 @configclass
@@ -287,7 +354,10 @@ class ObservationsCfg:
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         
-        
+        # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        contact_forces_mag = ObsTerm(func=contact_force_mag)
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -303,7 +373,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.1, 0.1), "y": (-0.3, 0.3), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -317,7 +387,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-0.01, 0.01)},
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -346,6 +416,8 @@ class RewardsCfg:
     
     smoothness = RewTerm(func=first_order_smooth_reward, weight=0.1)
     
+    contact = RewTerm(func=contact_force_mag, weight=-0.1)
+    
     minus_is_alive = RewTerm(func=mdp.is_alive, weight=-0.01)
 
 @configclass
@@ -369,7 +441,7 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
-    scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
+    scene: MySceneCfg = MySceneCfg(num_envs=4, env_spacing=10)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

@@ -92,10 +92,10 @@ extract_python_exe() {
     fi
     # kit dependencies are built with python 3.10 so any other version will not work
     # this is needed in case users have multiple python versions installed and the wrong one is being used
-    if [ "$(${python_exe} --version | grep -c '3.10')" -eq 0 ]; then
-        echo "[ERROR] Found Python version: $(${python_exe} --version) while expecting 3.10. Please use the correct python version." >&2
-        exit 1
-    fi
+    # if [ "$(${python_exe} --version | grep -c '3.10')" -eq 0 ]; then
+    #     echo "[ERROR] Found Python version: $(${python_exe} --version) while expecting 3.10. Please use the correct python version." >&2
+    #     exit 1
+    # fi
     # return the result
     echo ${python_exe}
 }
