@@ -260,6 +260,18 @@ def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tens
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.root_pos_w - env.scene.env_origins
 
+def base_orientation(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.root_quat_w
+
+def base_orientation_2d(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.heading_w
+
 def base_linear_velocity(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
     # extract the used quantities (to enable type-hinting)
@@ -338,6 +350,7 @@ class ObservationsCfg:
 
         # cube velocity
         position = ObsTerm(func=base_position, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        orientation_2d = ObsTerm(func=base_orientation_2d, params={"asset_cfg": SceneEntityCfg("differential_car")})
         linear_velocity = ObsTerm(func=base_linear_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
@@ -360,7 +373,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-0.2, 0.2)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -443,9 +456,9 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 2
         
         # simulation settings
-        self.sim.dt = 0.01
+        self.sim.dt = 0.1
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.episode_length_s = 200
+        self.episode_length_s = 25
 
 
 def main():
@@ -477,9 +490,11 @@ def main():
 
     camera = env.scene["camera"]
     
+    is_saved = False
     while simulation_app.is_running():
-        if count % 1000 == 0:
+        if count % 50 == 0:
             count = 0
+            is_saved = False
             obs, _ = env.reset()
             print("-" * 80)
             print("[INFO] Reset the environment.")
@@ -489,9 +504,14 @@ def main():
         depth_images = obs["policy"][:, non_image_obs_dim:]
         depth_images = depth_images.view(env.num_envs, 480, 640)
         # print(f"Depth images pos: {env.scene['camera'].data.pos_w}")
-                
+        
+        
         if args_cli.draw:
-            pointclouds = []
+            if count < 40 or is_saved:
+                continue
+            is_saved = True
+            
+            pointclouds = torch.tensor([], device=env.device)
             for i in range(env.num_envs):
                 pointcloud = create_pointcloud_from_depth(
                     intrinsic_matrix=camera.data.intrinsic_matrices[i],
@@ -500,23 +520,35 @@ def main():
                     orientation=camera.data.quat_w_ros[i],
                     device=env.device,
                 )
-                pointclouds.append(pointcloud)
+                pointclouds = torch.stack([pointclouds, pointcloud], dim=0)
                 # print(f"Pointcloud shape: {pointcloud.shape}")
             
-            pointclouds = torch.cat(pointclouds, dim=0)
-            # pointclouds = pointclouds.view(-1, 3)
-            # print(f"Pointcloud shape: {pointclouds.shape}")
-
-            # pointcloud_o3d = o3d.geometry.PointCloud()
-            # pointcloud_o3d.points = o3d.utility.Vector3dVector(pointclouds.cpu().numpy())
-            # pointcloud_o3d = pointcloud_o3d.voxel_down_sample(voxel_size=0.05)
+            # pointclouds = torch.tensor(pointclouds, device=env.device)
             
-            # Save the pointcloud to the 'output' directory in the same folder as the script
-            # o3d.io.write_point_cloud(os.path.join(cloud_output_dir, f"pointcloud_{count}.ply"), pointcloud_o3d, write_ascii=True)
-            # print('Pointcloud saved.')
+            # vehicle_pos = obs["policy"][:, :3]
+            # vehicle_pos = vehicle_pos[:, :2]
+            
+            # vehicle_ori = obs["policy"][:, 4]
+            
+            # vehicle_pose = torch.cat([vehicle_pos, vehicle_ori.unsqueeze(1)], dim=1)
+            
+            # torch.save(vehicle_pose, os.path.join(cloud_output_dir, f"vehicle_pose_{count}.pt"))
+            # torch.save(pointclouds, os.path.join(cloud_output_dir, f"pointcloud_{count}.pt"))
+            
+            # pointclouds = torch.cat(pointclouds, dim=0)
+            # # pointclouds = pointclouds.view(-1, 3)
+            # # print(f"Pointcloud shape: {pointclouds.shape}")
 
-            # points_downsampled = np.array(pointcloud_o3d.points)
-            # pointclouds = torch.tensor(points_downsampled, device=env.device)
+            # # pointcloud_o3d = o3d.geometry.PointCloud()
+            # # pointcloud_o3d.points = o3d.utility.Vector3dVector(pointclouds.cpu().numpy())
+            # # pointcloud_o3d = pointcloud_o3d.voxel_down_sample(voxel_size=0.05)
+            
+            # # Save the pointcloud to the 'output' directory in the same folder as the script
+            # # o3d.io.write_point_cloud(os.path.join(cloud_output_dir, f"pointcloud_{count}.ply"), pointcloud_o3d, write_ascii=True)
+            # # print('Pointcloud saved.')
+
+            # # points_downsampled = np.array(pointcloud_o3d.points)
+            # # pointclouds = torch.tensor(points_downsampled, device=env.device)
 
             if len(pointclouds) > 0 and sim.has_gui():
                 pc_markers.visualize(translations=pointclouds)
