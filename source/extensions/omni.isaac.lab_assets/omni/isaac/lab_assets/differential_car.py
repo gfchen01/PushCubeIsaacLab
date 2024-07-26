@@ -10,7 +10,7 @@ from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 
 DIFFEREENTIAL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/clp/Downloads/jetbot.usd",
+        usd_path=f"/home/luke/Downloads/jetbot.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,

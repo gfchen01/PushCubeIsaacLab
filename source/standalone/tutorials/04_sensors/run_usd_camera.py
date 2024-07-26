@@ -98,7 +98,7 @@ def define_sensor() -> Camera:
             "instance_segmentation_fast",
             "instance_id_segmentation_fast",
         ],
-        colorize_semantic_segmentation=True,
+        colorize_semantic_segmentation=False,
         colorize_instance_id_segmentation=True,
         colorize_instance_segmentation=True,
         spawn=sim_utils.PinholeCameraCfg(

@@ -157,6 +157,136 @@ def create_pointcloud_from_depth(
     else:
         return depth_cloud
 
+def create_semantic_pointcloud_from_depth_and_seg(
+    intrinsic_matrix: np.ndarray | torch.Tensor | wp.array,
+    depth: np.ndarray | torch.Tensor | wp.array,
+    semantic: np.ndarray | torch.Tensor | wp.array,
+    keep_invalid: bool = False,
+    position: Sequence[float] | None = None,
+    orientation: Sequence[float] | None = None,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    r"""Creates semantic pointcloud from input depth image, input segmentation, and camera intrinsic matrix.
+
+    This function creates a pointcloud from a depth image and camera intrinsic matrix. The pointcloud is
+    computed using the following equation:
+
+    .. math::
+        p_{camera} = K^{-1} \times [u, v, 1]^T \times d
+
+    where :math:`K` is the camera intrinsic matrix, :math:`u` and :math:`v` are the pixel coordinates and
+    :math:`d` is the depth value at the pixel.
+
+    Additionally, the pointcloud can be transformed from the camera frame to a target frame by providing
+    the position ``t`` and orientation ``R`` of the camera in the target frame:
+
+    .. math::
+        p_{target} = R_{target} \times p_{camera} + t_{target}
+
+    Args:
+        intrinsic_matrix: A (3, 3) array providing camera's calibration matrix.
+        depth: An array of shape (H, W) with values encoding the depth measurement.
+        semantic: An array of shape (H, W) with values encoding the semantic segmentation.
+        keep_invalid: Whether to keep invalid points in the cloud or not. Invalid points
+            correspond to pixels with depth values 0.0 or NaN. Defaults to False.
+        position: The position of the camera in a target frame. Defaults to None.
+        orientation: The orientation (w, x, y, z) of the camera in a target frame. Defaults to None.
+        device: The device for torch where the computation should be executed.
+            Defaults to None, i.e. takes the device that matches the depth image.
+
+    Returns:
+        An array/tensor of shape (N, 3) comprising of 3D coordinates of points.
+        The returned datatype is torch if input depth is of type torch.tensor or . Otherwise, a np.ndarray
+        is returned.
+    """
+    # We use PyTorch here for matrix multiplication since it is compiled with Intel MKL while numpy
+    # by default uses OpenBLAS. With PyTorch (CPU), we could process a depth image of size (480, 640)
+    # in 0.0051 secs, while with numpy it took 0.0292 secs.
+
+    # convert to numpy matrix
+    is_numpy = isinstance(depth, np.ndarray)
+    # decide device
+    if device is None and is_numpy:
+        device = torch.device("cpu")
+    # convert depth to torch tensor
+    depth = convert_to_torch(depth, dtype=torch.float32, device=device)
+    semantic = convert_to_torch(semantic, dtype=torch.float32, device=device)
+    # update the device with the device of the depth image
+    # note: this is needed since warp does not provide the device directly
+    device = depth.device
+    # convert inputs to torch tensors
+    intrinsic_matrix = convert_to_torch(intrinsic_matrix, dtype=torch.float32, device=device)
+    if position is not None:
+        position = convert_to_torch(position, dtype=torch.float32, device=device)
+    if orientation is not None:
+        orientation = convert_to_torch(orientation, dtype=torch.float32, device=device)
+    # compute pointcloud
+    depth_cloud, label = math_utils.unproject_depth_sem(depth, semantic, intrinsic_matrix)
+    # convert 3D points to world frame
+    depth_cloud = transform_points(depth_cloud, position, orientation)
+    depth_cloud_labeled = torch.cat([depth_cloud, label], dim=-1)
+
+    # keep only valid entries if flag is set
+    if not keep_invalid:
+        pts_idx_to_keep = torch.all(torch.logical_and(~torch.isnan(depth_cloud), ~torch.isinf(depth_cloud)), dim=1)
+        # depth_cloud = depth_cloud[pts_idx_to_keep, ...]
+        depth_cloud_labeled = depth_cloud_labeled[pts_idx_to_keep, ...]
+
+    # return everything according to input type
+    if is_numpy:
+        return depth_cloud_labeled.detach().cpu().numpy()
+    else:
+        return depth_cloud_labeled
+
+def create_birdview_from_pc(pointcloud_stacked: torch.Tensor,
+                            camera_pos: torch.Tensor,
+                            scene_origin: torch.Tensor,
+                            resolution: float = 0.025,
+                            device: torch.device | str | None = None) -> torch.Tensor:
+    obj_key = 3
+    
+    kernel_size = 5
+    obj_kernel = torch.ones((kernel_size, kernel_size), dtype=torch.float, device=device)
+    obj_kernel /= kernel_size * kernel_size  # Normalize the kernel
+    obj_kernel = obj_kernel.view(1, 1, kernel_size, kernel_size)
+    
+    camera_pos[:, 2] = 0.0
+    num_robots = camera_pos.shape[0]
+
+    # Define the boundaries and resolution of the image
+    x_min, x_max = -1.25, 1.25
+    y_min, y_max = -1.25, 1.25
+
+    # image width and height
+    width = int((x_max - x_min) / resolution)
+    height = int((y_max - y_min) / resolution)
+    
+    bird_view_image = torch.zeros((num_robots, 3, height, width), device=device)
+
+    pc_relative_stacked = pointcloud_stacked
+    pc_relative_stacked[:, :, :3] = pointcloud_stacked[:, :, :3] - scene_origin.unsqueeze(1)
+
+    x_coords = pc_relative_stacked[..., 0]
+    y_coords = pc_relative_stacked[..., 1]
+    z_coords = pc_relative_stacked[..., 2]
+    indicies = pc_relative_stacked[..., 3]
+
+    x_pixels = ((x_coords - x_min) / resolution).long()
+    y_pixels = ((y_coords - y_min) / resolution).long()
+    z_pixels = z_coords
+
+    obj_valid_mask = (indicies == obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
+    bg_valid_mask = (indicies != obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
+
+    bird_view_image[torch.arange(num_robots).unsqueeze(1), 0, y_pixels[obj_valid_mask], x_pixels[obj_valid_mask]] = 1  # not necessarily z_pixels
+    bird_view_image[torch.arange(num_robots).unsqueeze(1), 1, y_pixels[bg_valid_mask], x_pixels[bg_valid_mask]] = 1
+    bird_view_image[:, 0:1, :, :] = torch.nn.functional.conv2d(bird_view_image[:, 0:1, :, :], obj_kernel, padding=int(kernel_size // 2))
+    bird_view_image[:, 1:2, :, :] = torch.nn.functional.conv2d(bird_view_image[:, 1:2, :, :], obj_kernel, padding=int(kernel_size // 2))
+
+    thresh = 0.01
+    bird_view_image = (bird_view_image > thresh).float()
+
+    return bird_view_image
 
 def create_pointcloud_from_rgbd(
     intrinsic_matrix: torch.Tensor | np.ndarray | wp.array,

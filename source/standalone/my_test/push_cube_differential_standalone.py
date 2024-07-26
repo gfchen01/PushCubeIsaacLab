@@ -46,9 +46,10 @@ from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
 
 # sensors
+from omni.isaac.lab.sensors import ContactSensorCfg
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
-from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
-from omni.isaac.lab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
+from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth, create_semantic_pointcloud_from_depth_and_seg
+from omni.isaac.lab.sensors.camera.utils import create_birdview_from_pc
 from omni.isaac.lab_assets import VELODYNE_VLP_16_RAYCASTER_CFG
 
 from omni.isaac.lab.markers import VisualizationMarkers
@@ -60,8 +61,7 @@ from omni.isaac.lab.utils import convert_dict_to_backend
 ##
 from omni.isaac.lab_assets import DIFFEREENTIAL_CFG
 
-import open3d as o3d
-import numpy as np
+
 
 class CarActionTerm(ActionTerm):
     """Simple action term that implements a PD controller to track a target position.
@@ -159,7 +159,7 @@ class CarActionTermCfg(ActionTermCfg):
     
 SURROUNDING_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/clp/Downloads/T_shape.usd",
+        usd_path=f"/home/luke/Downloads/door_env.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
@@ -174,9 +174,11 @@ SURROUNDING_CFG = RigidObjectCfg(
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
         ),
-        scale=(0.2, 0.2, 0.2),
+        scale=(0.4, 0.4, 0.4),
+        activate_contact_sensors=True,
+        semantic_tags=[("class", "surrounding")],
     ),
-    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.02)),
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.0)),
 )
 
 @configclass
@@ -191,22 +193,27 @@ class MySceneCfg(InteractiveSceneCfg):
 
     # add car
     differential_car: ArticulationCfg = DIFFEREENTIAL_CFG.copy()
+    differential_car.init_state.pos = (1.5, 0.0, 0.10)
     differential_car.prim_path = "{ENV_REGEX_NS}/differential_car"
     
     cube: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/cube",
         spawn=sim_utils.CuboidCfg(
-            size=(0.05, 0.05, 0.05),
+            size=(0.08, 0.08, 0.08),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
+            semantic_tags=[("class", "cube")],
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.02)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.02)),
     )
     
     surrounding: RigidObjectCfg = SURROUNDING_CFG.copy()
     surrounding.prim_path = "{ENV_REGEX_NS}/surrounding"
+    surrounding_contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/surrounding/door_env", update_period=0.0
+    )
     
     # lights
     light = AssetBaseCfg(
@@ -219,11 +226,12 @@ class MySceneCfg(InteractiveSceneCfg):
         update_period=0.1,
         height=480,
         width=640,
-        data_types=["rgb", "distance_to_image_plane"],
+        data_types=["rgb", "distance_to_image_plane", "semantic_segmentation"],
+        colorize_semantic_segmentation=False,
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e3)
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
-        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.3), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.1), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
     )
     
     # ray_caster = RayCasterCfg(
@@ -254,11 +262,24 @@ def depth_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor
     dim_num = camera.data.output["distance_to_image_plane"].shape[0]
     return camera.data.output["distance_to_image_plane"].view(dim_num, -1)
 
+def base_position_absolute(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.root_pos_w
+
 def base_position(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     return asset.data.root_pos_w - env.scene.env_origins
+
+def base_orientation_2d(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # print(f"asset.data.heading_w: {asset.data.heading_w.view(-1, 1)}")
+    return asset.data.heading_w.view(-1, 1)
 
 def base_linear_velocity(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Root linear velocity in the asset's root frame."""
@@ -320,6 +341,14 @@ def is_obs_at_goal(env: ManagerBasedEnv, obs_cfg: SceneEntityCfg) -> torch.Tenso
     """Check if the agent is too far from the obstacle."""
     return obs2origin(env, obs_cfg) < 0.05
 
+def contact_force_mag(env: ManagerBasedEnv) -> torch.Tensor:
+    """Magnitude of the contact force."""
+    # extract the used quantities (to enable type-hinting)
+    contact_forces = env.scene["surrounding_contact_forces"].data.net_forces_w
+    # calculate the magnitude of each contact force
+    contact_forces_mag = torch.norm(contact_forces, dim=-1)
+    return contact_forces_mag
+
 # config classes
 
 @configclass
@@ -337,13 +366,15 @@ class ObservationsCfg:
         """Observations for policy group."""
 
         # cube velocity
-        position = ObsTerm(func=base_position, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        position = ObsTerm(func=base_position_absolute, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        orientation_2d = ObsTerm(func=base_orientation_2d, params={"asset_cfg": SceneEntityCfg("differential_car")})
         linear_velocity = ObsTerm(func=base_linear_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         
         # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        # depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        contact_forces_mag = ObsTerm(func=contact_force_mag)
         
         def __post_init__(self):
             self.enable_corruption = True
@@ -360,7 +391,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (3.13, 3.15)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -374,7 +405,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-0.01, 0.01)},
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),
@@ -443,17 +474,17 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 2
         
         # simulation settings
-        self.sim.dt = 0.01
+        self.sim.dt = 0.05
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.episode_length_s = 200
+        self.episode_length_s = 100
 
 
 def main():
     env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
     
     base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 1.0
-    base_target_vel[:, 1] = 2.0
+    base_target_vel[:, 0] = 0.0
+    base_target_vel[:, 1] = 0.0
     
     obs, _ = env.reset()
     count = 0
@@ -470,69 +501,95 @@ def main():
         output_dir=output_dir,
         frame_padding=0,
     )
-
-    cloud_output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "pointcloud")
-    if not os.path.exists(cloud_output_dir):
-        os.makedirs(cloud_output_dir)
-
+    
     camera = env.scene["camera"]
     
+    is_saved = False
+    
     while simulation_app.is_running():
-        if count % 1000 == 0:
+        if count % 200 == 0:
             count = 0
             obs, _ = env.reset()
+            is_saved = False
             print("-" * 80)
             print("[INFO] Reset the environment.")
         obs, rew, terminated, truncated, info = env.step(base_target_vel)
+        count += 1
         
         # extract depth image
-        depth_images = obs["policy"][:, non_image_obs_dim:]
-        depth_images = depth_images.view(env.num_envs, 480, 640)
+        # depth_images = obs["policy"][:, non_image_obs_dim:]
+        # depth_images = depth_images.view(env.num_envs, 480, 640)
         # print(f"Depth images pos: {env.scene['camera'].data.pos_w}")
+        
+        contact_force_magnitude = obs["policy"][:, non_image_obs_dim]
+        # contact_force_magnitude = contact_force_mag(env)
+        # print(f"Contact force magnitude: {contact_force_magnitude}")
                 
-        if args_cli.draw:
-            pointclouds = []
+        if env.sim.has_gui() and args_cli.draw:
+            # print(f"count: {count}")
+            # if count < 40 or is_saved:
+            #     continue
+            # is_saved = True
+            # print(f"Saving pointclouds at count: {count}")
+            
+            data_dict = dict()
             for i in range(env.num_envs):
-                pointcloud = create_pointcloud_from_depth(
+                # print(f'intrinsic matrix {count}:{i} : {camera.data.intrinsic_matrices[i]}')
+                # print(f'pos_w {count}:{i} : {camera.data.pos_w[i]}')
+                # print(f'quat_w_ros {count}:{i} : {camera.data.quat_w_ros[i]}')
+                
+                pointcloud_labeled = create_semantic_pointcloud_from_depth_and_seg(
                     intrinsic_matrix=camera.data.intrinsic_matrices[i],
                     depth=camera.data.output["distance_to_image_plane"][i],
+                    semantic=camera.data.output["semantic_segmentation"][i],
                     position=camera.data.pos_w[i],
                     orientation=camera.data.quat_w_ros[i],
                     device=env.device,
+                    keep_invalid=True,
                 )
-                pointclouds.append(pointcloud)
+                data_dict[i] = pointcloud_labeled
+                # pointclouds.append(pointcloud)
                 # print(f"Pointcloud shape: {pointcloud.shape}")
             
-            pointclouds = torch.cat(pointclouds, dim=0)
-            # pointclouds = pointclouds.view(-1, 3)
-            # print(f"Pointcloud shape: {pointclouds.shape}")
-
-            # pointcloud_o3d = o3d.geometry.PointCloud()
-            # pointcloud_o3d.points = o3d.utility.Vector3dVector(pointclouds.cpu().numpy())
-            # pointcloud_o3d = pointcloud_o3d.voxel_down_sample(voxel_size=0.05)
+            car_pos = obs["policy"][:, 0:2]
+            car_ori = obs["policy"][:, 3]
+            car_pose = torch.cat((car_pos, car_ori.view(-1, 1)), dim=-1)
+            data_dict["car"] = car_pose
+            data_dict["scene_origin"] = env.scene.env_origins
             
-            # Save the pointcloud to the 'output' directory in the same folder as the script
-            # o3d.io.write_point_cloud(os.path.join(cloud_output_dir, f"pointcloud_{count}.ply"), pointcloud_o3d, write_ascii=True)
-            # print('Pointcloud saved.')
-
-            # points_downsampled = np.array(pointcloud_o3d.points)
-            # pointclouds = torch.tensor(points_downsampled, device=env.device)
-
-            if len(pointclouds) > 0 and sim.has_gui():
-                pc_markers.visualize(translations=pointclouds)
+            torch.save(data_dict, os.path.join(output_dir, f"pointcloud_{count}.pt"))
+            
+            # pointclouds = torch.cat(pointclouds, dim=0)
+            # pointclouds = pointclouds.view(-1, 3)
+            # print(f"Pointclouds: {pointclouds}")
+            # if len(pointclouds) > 0:
+            #     pc_markers.visualize(translations=pointclouds)
         
-        # print(f"camera data output: {camera.data.output}")
+        # if "rgb" in camera.data.output.keys():
+        #     print("Received shape of rgb image        : ", camera.data.output["rgb"].shape)
+        # if "distance_to_image_plane" in camera.data.output.keys():
+        #     print("Received shape of depth image      : ", camera.data.output["distance_to_image_plane"].shape)
+        # if "normals" in camera.data.output.keys():
+        #     print("Received shape of normals          : ", camera.data.output["normals"].shape)
+        # if "semantic_segmentation" in camera.data.output.keys():
+        #     print("Received shape of semantic segm.   : ", camera.data.output["semantic_segmentation"].shape)
+        # if "instance_segmentation_fast" in camera.data.output.keys():
+        #     print("Received shape of instance segm.   : ", camera.data.output["instance_segmentation_fast"].shape)
+        # if "instance_id_segmentation_fast" in camera.data.output.keys():
+        #     print("Received shape of instance id segm.: ", camera.data.output["instance_id_segmentation_fast"].shape)
+        # print("-------------------------------")
         
+        # print("semantic: ", camera.data.info)
+        
+        camera_index = 0
         if args_cli.save:
             # Save images from camera at camera_index
             # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.
             # tensordict allows easy indexing of tensors in the dictionary
-            cam_data = convert_dict_to_backend(camera.data.output, backend="numpy")
-            # print(f"cam_data type: {type(cam_data['rgb'])}")
-            single_cam_data = {"rgb": cam_data["rgb"][0]}
-            
+            single_cam_data = convert_dict_to_backend(camera.data.output[camera_index], backend="numpy")
+
             # Extract the other information
-            single_cam_info = camera.data.info[0]
+            single_cam_info = camera.data.info[camera_index]
 
             # Pack data back into replicator format to save them using its writer
             if env.sim.get_version()[0] == 4:
@@ -551,13 +608,10 @@ def main():
                         rep_output[key] = data
             # Save images
             # Note: We need to provide On-time data for Replicator to save the images.
-            rep_output["trigger_outputs"] = {"on_time": camera.frame[0]}
+            rep_output["trigger_outputs"] = {"on_time": camera.frame[camera_index]}
             rep_writer.write(rep_output)
+
         
-        # base_actual_vel = obs["policy"][0, 3:9]
-        # print(f"Base actual velocity: {base_actual_vel}")
-        count += 1
-    
     env.close()
 
 
