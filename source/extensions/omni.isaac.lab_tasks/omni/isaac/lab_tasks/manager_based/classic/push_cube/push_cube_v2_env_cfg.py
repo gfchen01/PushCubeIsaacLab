@@ -193,29 +193,6 @@ class MySceneCfg(InteractiveSceneCfg):
         prim_path="/World/light",
         spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
-    
-    # camera = CameraCfg(
-    #     prim_path="{ENV_REGEX_NS}/differential_car/chassis/front_cam",
-    #     update_period=0.1,
-    #     height=480,
-    #     width=640,
-    #     data_types=["rgb", "distance_to_image_plane"],
-    #     spawn=sim_utils.PinholeCameraCfg(
-    #         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
-    #     ),
-    #     offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.1), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
-    # )
-    
-    # ray_caster = RayCasterCfg(
-    #     prim_path="{ENV_REGEX_NS}/differential_car/chassis",
-    #     mesh_prim_paths=["/World/ground"],
-    #     pattern_cfg=patterns.LidarPatternCfg(
-    #         channels=16, vertical_fov_range=(-15.0, 15.0), horizontal_fov_range=(-180.0, 180.0), horizontal_res=0.2
-    #     ), # Velodyne VLP-16
-    #     attach_yaw_only=True,
-    #     debug_vis=True,
-    #     max_distance=100,
-    # )
 
 # Utility functions
 
@@ -353,7 +330,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (3.13, 3.15)},
             "velocity_range": {
                 "x": (-0.0, 0.0),
                 "y": (-0.0, 0.0),

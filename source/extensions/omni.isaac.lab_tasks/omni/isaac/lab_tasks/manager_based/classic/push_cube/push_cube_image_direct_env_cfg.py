@@ -1,32 +1,4 @@
-import argparse
-
-from omni.isaac.lab.app import AppLauncher
-
-# add argparse arguments
-parser = argparse.ArgumentParser(description="Push cube standalone test")
-parser.add_argument("--draw", action="store_true", default=False, help="Draw pointcloud from depth")
-parser.add_argument(
-    "--save",
-    action="store_true",
-    default=False,
-    help="Save the data from camera at index specified by ``--camera_id``.",
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-args_cli.enable_cameras = True
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
-
 import torch
-
-import omni.isaac.core.utils.prims as prim_utils
-import os
-import omni.replicator.core as rep
 
 import omni.isaac.lab.envs.mdp as mdp
 import omni.isaac.lab.sim as sim_utils
@@ -50,11 +22,6 @@ from omni.isaac.lab.sensors import ContactSensorCfg
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
 from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth, create_semantic_pointcloud_from_depth_and_seg
 from omni.isaac.lab.sensors.camera.utils import create_birdview_from_pc
-from omni.isaac.lab_assets import VELODYNE_VLP_16_RAYCASTER_CFG
-
-from omni.isaac.lab.markers import VisualizationMarkers
-from omni.isaac.lab.markers.config import RAY_CASTER_MARKER_CFG
-from omni.isaac.lab.utils import convert_dict_to_backend
 
 ##
 # Pre-defined configs
@@ -178,7 +145,7 @@ SURROUNDING_CFG = RigidObjectCfg(
         activate_contact_sensors=True,
         semantic_tags=[("class", "surrounding")],
     ),
-    init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.0)),
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.8, 0.0, 0.0)),
 )
 
 @configclass
@@ -193,7 +160,7 @@ class MySceneCfg(InteractiveSceneCfg):
 
     # add car
     differential_car: ArticulationCfg = DIFFEREENTIAL_CFG.copy()
-    differential_car.init_state.pos = (1.5, 0.0, 0.10)
+    differential_car.init_state.pos = (1.3, 0.0, 0.10)
     differential_car.prim_path = "{ENV_REGEX_NS}/differential_car"
     
     cube: RigidObjectCfg = RigidObjectCfg(
@@ -206,7 +173,7 @@ class MySceneCfg(InteractiveSceneCfg):
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
             semantic_tags=[("class", "cube")],
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(1.0, 0.0, 0.02)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.9, 0.0, 0.02)),
     )
     
     surrounding: RigidObjectCfg = SURROUNDING_CFG.copy()
@@ -363,6 +330,10 @@ def contact_force_mag(env: ManagerBasedEnv) -> torch.Tensor:
     contact_forces_mag = torch.norm(contact_forces, dim=-1)
     return contact_forces_mag
 
+def contact_force_reward(env: ManagerBasedEnv) -> torch.Tensor:
+    """Reward based on the contact force."""
+    return -torch.sum(contact_force_mag(env))
+
 # config classes
 
 @configclass
@@ -442,14 +413,18 @@ class RewardsCfg:
     
     # terminating = RewTerm(func=mdp.is_terminated, weight=-10.0)
     
-    minus_dis2obs = RewTerm(func=dis2obs_reward, weight=1.0, params={"asset_cfg": SceneEntityCfg("differential_car"), 
-                                                                     "obs_cfg": SceneEntityCfg("cube")})
+    # minus_dis2obs = RewTerm(func=dis2obs_reward, weight=1.0, params={"asset_cfg": SceneEntityCfg("differential_car"), 
+    #                                                                  "obs_cfg": SceneEntityCfg("cube")})
     
-    minus_obs2origin = RewTerm(func=obs2goal_reward, weight=1.0, params={"obs_cfg": SceneEntityCfg("cube")})
+    minus_me2origin = RewTerm(func=obs2goal_reward, weight=10.0, params={"obs_cfg": SceneEntityCfg("differential_car")})
+    
+    # minus_obs2origin = RewTerm(func=obs2goal_reward, weight=2.0, params={"obs_cfg": SceneEntityCfg("cube")})
     
     smoothness = RewTerm(func=first_order_smooth_reward, weight=0.1)
     
-    minus_is_alive = RewTerm(func=mdp.is_alive, weight=-0.01)
+    # minus_is_alive = RewTerm(func=mdp.is_alive, weight=-0.1)
+    
+    minus_contact_force = RewTerm(func=contact_force_reward, weight=0.001)
 
 @configclass
 class TerminationsCfg:
@@ -491,142 +466,4 @@ class PushCubeEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 0.05
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.episode_length_s = 100
-
-
-def main():
-    env = ManagerBasedRLEnv(cfg=PushCubeEnvCfg())
-    
-    base_target_vel = torch.zeros(env.num_envs, 2, device=env.device)
-    base_target_vel[:, 0] = 0.0
-    base_target_vel[:, 1] = 1.0
-    
-    obs, _ = env.reset()
-    count = 0
-    
-    non_image_obs_dim = 11
-    
-    if env.sim.has_gui() and args_cli.draw:
-        cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
-        cfg.markers["hit"].radius = 0.002
-        pc_markers = VisualizationMarkers(cfg)
-        
-    output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "camera")
-    rep_writer = rep.BasicWriter(
-        output_dir=output_dir,
-        frame_padding=0,
-    )
-    
-    camera = env.scene["camera"]
-    
-    is_saved = False
-    
-    while simulation_app.is_running():
-        if count % 200 == 0:
-            count = 0
-            obs, _ = env.reset()
-            is_saved = False
-            print("-" * 80)
-            print("[INFO] Reset the environment.")
-        obs, rew, terminated, truncated, info = env.step(base_target_vel)
-        count += 1
-        
-        # image = obs["policy"][:, non_image_obs_dim:]
-        # # print the number of elements that are not zero
-        # print(f"Number of non-zero elements: {torch.count_nonzero(image)}")
-        
-        # contact_force_magnitude = obs["policy"][:, non_image_obs_dim]
-        # contact_force_magnitude = contact_force_mag(env)
-        # print(f"Contact force magnitude: {contact_force_magnitude}")
-        
-        # if "rgb" in camera.data.output.keys():
-        #     print("Received shape of rgb image        : ", camera.data.output["rgb"].shape)
-        # if "distance_to_image_plane" in camera.data.output.keys():
-        #     print("Received shape of depth image      : ", camera.data.output["distance_to_image_plane"].shape)
-        # if "normals" in camera.data.output.keys():
-        #     print("Received shape of normals          : ", camera.data.output["normals"].shape)
-        # if "semantic_segmentation" in camera.data.output.keys():
-        #     print("Received shape of semantic segm.   : ", camera.data.output["semantic_segmentation"].shape)
-        # if "instance_segmentation_fast" in camera.data.output.keys():
-        #     print("Received shape of instance segm.   : ", camera.data.output["instance_segmentation_fast"].shape)
-        # if "instance_id_segmentation_fast" in camera.data.output.keys():
-        #     print("Received shape of instance id segm.: ", camera.data.output["instance_id_segmentation_fast"].shape)
-        # print("-------------------------------")
-                
-        if env.sim.has_gui() and args_cli.draw:
-            # print(f"count: {count}")
-            # if count < 40 or is_saved:
-            #     continue
-            # is_saved = True
-            # print(f"Saving pointclouds at count: {count}")
-                
-            pointcloud_labeled = create_semantic_pointcloud_from_depth_and_seg(
-                intrinsic_matrix=camera.data.intrinsic_matrices,
-                depth=camera.data.output["distance_to_image_plane"],
-                semantic=camera.data.output["semantic_segmentation"],
-                position=camera.data.pos_w,
-                orientation=camera.data.quat_w_ros,
-                device=env.device,
-                keep_invalid=True,
-            )
-            
-            car_pos = obs["policy"][:, 0:2]
-            car_ori = obs["policy"][:, 3:4]
-            car_pose = torch.cat((car_pos, car_ori), dim=-1)
-            
-            bird_view_image = create_birdview_from_pc(
-                pointcloud_stacked=pointcloud_labeled,
-                camera_pose=car_pose,
-                scene_origin=env.scene.env_origins,
-                resolution=0.025,
-                device=env.device,
-            )
-            
-            # torch.save(bird_view_image, os.path.join(output_dir, f"bird_view_image_{count}.pt"))
-            # print(f"Saved bird view image at count: {count}")
-        
-        camera_index = 0
-        if args_cli.save:
-            # Save images from camera at camera_index
-            # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.
-            # tensordict allows easy indexing of tensors in the dictionary
-            single_cam_data = convert_dict_to_backend(camera.data.output[camera_index], backend="numpy")
-            
-            # if args_cli.draw:
-            #     image_to_save = bird_view_image[0].permute(1, 2, 0)
-            #     image_to_save = torch.cat((image_to_save, torch.ones(image_to_save.shape[0], image_to_save.shape[1], 1, device=env.device)), dim=-1)
-            #     single_cam_data["bird_view"] = image_to_save.cpu().numpy()
-
-            # # Extract the other information
-            # single_cam_info = camera.data.info[camera_index]
-            # single_cam_info["bird_view"] = None
-
-            # Pack data back into replicator format to save them using its writer
-            if env.sim.get_version()[0] == 4:
-                rep_output = {"annotators": {}}
-                for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
-                    if info is not None:
-                        rep_output["annotators"][key] = {"render_product": {"data": data, **info}}
-                    else:
-                        rep_output["annotators"][key] = {"render_product": {"data": data}}
-            else:
-                rep_output = dict()
-                for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
-                    if info is not None:
-                        rep_output[key] = {"data": data, "info": info}
-                    else:
-                        rep_output[key] = data
-            # Save images
-            # Note: We need to provide On-time data for Replicator to save the images.
-            rep_output["trigger_outputs"] = {"on_time": camera.frame[camera_index]}
-            rep_writer.write(rep_output)
-
-        
-    env.close()
-
-
-if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()
+        self.episode_length_s = 20.0

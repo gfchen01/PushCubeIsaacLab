@@ -21,6 +21,7 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
+parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -55,12 +56,12 @@ def main():
     """Play with RSL-RL agent."""
     # parse configuration
     env_cfg = parse_env_cfg(
-        "Pushcube-ultimate", use_gpu=not args_cli.cpu, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
+        args_cli.task, use_gpu=not args_cli.cpu, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
-    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg("Pushcube-ultimate", args_cli)
+    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # create isaac environment
-    env = gym.make("Pushcube-ultimate", cfg=env_cfg)
+    env = gym.make(args_cli.task, cfg=env_cfg)
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)
 

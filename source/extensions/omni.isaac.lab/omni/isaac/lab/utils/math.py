@@ -1074,7 +1074,6 @@ def unproject_depth_sem(depth: torch.Tensor, sem: torch.Tensor, intrinsics: torc
     """
     depth_batch = depth.clone()
     sem_batch = sem.clone()
-    sem_batch = sem_batch[None]
 
     intrinsics_batch = intrinsics.clone()
     # check if inputs are batched
@@ -1086,6 +1085,14 @@ def unproject_depth_sem(depth: torch.Tensor, sem: torch.Tensor, intrinsics: torc
         depth_batch = depth_batch[None]  # (H, W) -> (1, H, W)
     if depth_batch.dim() == 4 and depth_batch.shape[-1] == 1:
         depth_batch = depth_batch.squeeze(dim=3)  # (N, H, W, 1) -> (N, H, W)
+    
+    if sem_batch.dim() == 3 and sem_batch.shape[-1] == 1:
+        sem_batch = sem_batch.squeeze(dim=2)
+    if sem_batch.dim() == 2:
+        sem_batch = sem_batch[None]
+    if sem_batch.dim() == 4 and sem_batch.shape[-1] == 1:
+        sem_batch = sem_batch.squeeze(dim=3)
+        
     if intrinsics_batch.dim() == 2:
         intrinsics_batch = intrinsics_batch[None]  # (3, 3) -> (1, 3, 3)
     # check shape of inputs
@@ -1093,7 +1100,9 @@ def unproject_depth_sem(depth: torch.Tensor, sem: torch.Tensor, intrinsics: torc
         raise ValueError(f"Expected depth images to have dim = 2 or 3 or 4: got shape {depth.shape}")
     if intrinsics_batch.dim() != 3:
         raise ValueError(f"Expected intrinsics to have shape (3, 3) or (N, 3, 3): got shape {intrinsics.shape}")
-
+    if sem_batch.dim() != 3:
+        raise ValueError(f"Expected sem images to have dim = 2 or 3 or 4: got shape {sem.shape}")
+    
     # get image height and width
     im_height, im_width = depth_batch.shape[1:]
     # create image points in homogeneous coordinates (3, H x W)
@@ -1109,10 +1118,10 @@ def unproject_depth_sem(depth: torch.Tensor, sem: torch.Tensor, intrinsics: torc
     # flatten depth image (N, H, W) -> (N, H x W)
     depth_batch = depth_batch.transpose_(1, 2).reshape(depth_batch.shape[0], -1).unsqueeze(2)
     depth_batch = depth_batch.expand(-1, -1, 3)
-
+    
     sem_batch = sem_batch.transpose_(1, 2).reshape(sem_batch.shape[0], -1).unsqueeze(2)
     sem_batch = sem_batch.expand(-1, -1, 1)
-
+    
     # scale points by depth
     points_xyz = points.transpose_(1, 2) * depth_batch  # (N, H x W, 3)
 

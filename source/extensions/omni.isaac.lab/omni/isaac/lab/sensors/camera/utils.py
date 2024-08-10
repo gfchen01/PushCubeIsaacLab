@@ -239,7 +239,7 @@ def create_semantic_pointcloud_from_depth_and_seg(
         return depth_cloud_labeled
 
 def create_birdview_from_pc(pointcloud_stacked: torch.Tensor,
-                            camera_pos: torch.Tensor,
+                            camera_pose: torch.Tensor,
                             scene_origin: torch.Tensor,
                             resolution: float = 0.025,
                             device: torch.device | str | None = None) -> torch.Tensor:
@@ -250,8 +250,18 @@ def create_birdview_from_pc(pointcloud_stacked: torch.Tensor,
     obj_kernel /= kernel_size * kernel_size  # Normalize the kernel
     obj_kernel = obj_kernel.view(1, 1, kernel_size, kernel_size)
     
-    camera_pos[:, 2] = 0.0
-    num_robots = camera_pos.shape[0]
+    num_robots = pointcloud_stacked.shape[0]
+    camera_yaw = camera_pose[:, 2]
+    cos_angles = torch.cos(-camera_yaw)
+    sin_angles = torch.sin(-camera_yaw)
+    rotations = torch.zeros((num_robots, 3, 3), dtype=torch.float, device=device)
+    rotations[:, 0, 0] = cos_angles
+    rotations[:, 0, 1] = sin_angles
+    rotations[:, 1, 0] = sin_angles
+    rotations[:, 1, 1] = cos_angles
+    rotations[:, 2, 2] = 1
+    
+    camera_pose[:, 2] = 0.0
 
     # Define the boundaries and resolution of the image
     x_min, x_max = -1.25, 1.25
@@ -264,19 +274,20 @@ def create_birdview_from_pc(pointcloud_stacked: torch.Tensor,
     bird_view_image = torch.zeros((num_robots, 3, height, width), device=device)
 
     pc_relative_stacked = pointcloud_stacked
-    pc_relative_stacked[:, :, :3] = pointcloud_stacked[:, :, :3] - scene_origin.unsqueeze(1)
+    pc_relative_stacked[:, :, :3] = pointcloud_stacked[:, :, :3] - camera_pose.unsqueeze(1)
+    pc_relative_stacked[:, :, :3] = torch.bmm(pc_relative_stacked[:, :, :3], rotations.permute(0, 2, 1))
 
     x_coords = pc_relative_stacked[..., 0]
     y_coords = pc_relative_stacked[..., 1]
     z_coords = pc_relative_stacked[..., 2]
-    indicies = pc_relative_stacked[..., 3]
+    indices = pc_relative_stacked[..., 3]
 
     x_pixels = ((x_coords - x_min) / resolution).long()
     y_pixels = ((y_coords - y_min) / resolution).long()
     z_pixels = z_coords
 
-    obj_valid_mask = (indicies == obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
-    bg_valid_mask = (indicies != obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
+    obj_valid_mask = (indices == obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
+    bg_valid_mask = (indices != obj_key) & (x_pixels >= 0) & (x_pixels < width) & (y_pixels >= 0) & (y_pixels < height) & (z_pixels > 0.01)
 
     bird_view_image[torch.arange(num_robots).unsqueeze(1), 0, y_pixels[obj_valid_mask], x_pixels[obj_valid_mask]] = 1  # not necessarily z_pixels
     bird_view_image[torch.arange(num_robots).unsqueeze(1), 1, y_pixels[bg_valid_mask], x_pixels[bg_valid_mask]] = 1
