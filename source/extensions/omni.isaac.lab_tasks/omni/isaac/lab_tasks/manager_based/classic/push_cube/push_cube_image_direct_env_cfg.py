@@ -28,7 +28,7 @@ from omni.isaac.lab.sensors.camera.utils import create_birdview_from_pc
 ##
 from omni.isaac.lab_assets import DIFFEREENTIAL_CFG
 
-
+from pathlib import Path
 
 class CarActionTerm(ActionTerm):
     """Simple action term that implements a PD controller to track a target position.
@@ -123,10 +123,12 @@ class CarActionTermCfg(ActionTermCfg):
     # """Proportional gain of the PD controller."""
     # d_gain: float = 0.5
     # """Derivative gain of the PD controller."""
-    
+
+surrounding_path = str(Path.home().joinpath('Downloads', 'door_env.usd'))
+
 SURROUNDING_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/door_env.usd",
+        usd_path=surrounding_path,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,

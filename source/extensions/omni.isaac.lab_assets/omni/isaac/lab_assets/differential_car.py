@@ -3,14 +3,16 @@ from omni.isaac.lab.actuators import ImplicitActuatorCfg
 from omni.isaac.lab.assets import ArticulationCfg
 
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
-
+from pathlib import Path
 ##
 # Configuration
 ##
 
+robot_path = str(Path.home().joinpath('Downloads', 'jetbot.usd'))
+
 DIFFEREENTIAL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"/home/luke/Downloads/jetbot.usd",
+        usd_path=robot_path,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
             max_linear_velocity=1000.0,
