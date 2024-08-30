@@ -387,9 +387,9 @@ class ObservationsCfg:
         # obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         contact_forces_mag = ObsTerm(func=contact_force_mag)
         
-        bird_view_image = ObsTerm(func=bird_view_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        # bird_view_image = ObsTerm(func=bird_view_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        # depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         
         def __post_init__(self):
             self.enable_corruption = True
@@ -597,8 +597,8 @@ def main():
             #     image_to_save = torch.cat((image_to_save, torch.ones(image_to_save.shape[0], image_to_save.shape[1], 1, device=env.device)), dim=-1)
             #     single_cam_data["bird_view"] = image_to_save.cpu().numpy()
 
-            # # Extract the other information
-            # single_cam_info = camera.data.info[camera_index]
+            # Extract the other information
+            single_cam_info = camera.data.info[camera_index]
             # single_cam_info["bird_view"] = None
 
             # Pack data back into replicator format to save them using its writer

@@ -193,8 +193,8 @@ class MySceneCfg(InteractiveSceneCfg):
     camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/differential_car/chassis/front_cam",
         update_period=0.1,
-        height=480,
-        width=640,
+        height=120,
+        width=120,
         data_types=["rgb", "distance_to_image_plane", "semantic_segmentation"],
         colorize_semantic_segmentation=False,
         spawn=sim_utils.PinholeCameraCfg(
@@ -210,15 +210,16 @@ def rgb_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     # extract the used quantities (to enable type-hinting)
     camera: Camera = env.scene["camera"]
     # print(f'image shape: {camera.data.output["rgb"].shape}')
-    dim_num = camera.data.output["rgb"].shape[0]
-    return camera.data.output["rgb"].view(dim_num, -1)
+    return camera.data.output["rgb"].view(env.num_envs, -1)
 
 def depth_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Depth image from the camera."""
     # extract the used quantities (to enable type-hinting)
     camera: Camera = env.scene["camera"]
-    dim_num = camera.data.output["distance_to_image_plane"].shape[0]
-    return camera.data.output["distance_to_image_plane"].view(dim_num, -1)
+    depth = camera.data.output["distance_to_image_plane"]
+    # if any value is larger than 10.0, set it to 10.0
+    depth[depth > 10.0] = 10.0 # inf exists
+    return depth.view(env.num_envs, -1)
 
 def bird_view_image(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     camera: Camera = env.scene["camera"]
@@ -357,12 +358,12 @@ class ObservationsCfg:
         orientation_2d = ObsTerm(func=base_orientation_2d, params={"asset_cfg": SceneEntityCfg("differential_car")})
         linear_velocity = ObsTerm(func=base_linear_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
         angular_velocity = ObsTerm(func=base_angular_velocity, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        # obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
+        obstacle_position = ObsTerm(func=obstacle_position, params={"obstacle_cfg": SceneEntityCfg("cube")})
         contact_forces_mag = ObsTerm(func=contact_force_mag)
         
-        bird_view_image = ObsTerm(func=bird_view_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        # bird_view_image = ObsTerm(func=bird_view_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         # rgb = ObsTerm(func=rgb_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
-        # depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
+        depth = ObsTerm(func=depth_image, params={"asset_cfg": SceneEntityCfg("differential_car")})
         
         def __post_init__(self):
             self.enable_corruption = True
